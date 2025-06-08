@@ -30,3 +30,26 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# k6 specific
+k6
+k6.exe
+k6.darwin-amd64
+k6.darwin-arm64
+k6.linux-amd64
+k6.linux-arm64
+k6.windows-amd64.exe

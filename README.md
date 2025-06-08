@@ -33,19 +33,19 @@ import encryption from 'k6/x/encryption';
 
 export default function () {
     // Generate a new encryption key
-    const key = encryption.GenerateQualifiedKey();
+    const key = encryption.generateQualifiedKey();
     console.log('Generated key:', key);
     
     // Create an encryptor instance
-    const encryptor = encryption.NewEncryptor(key);
+    const encryptor = encryption.newEncryptor(key);
     
     // Encrypt a string
     const originalText = "Hello, World!";
-    const encryptedText = encryptor.EncryptString(originalText);
+    const encryptedText = encryptor.encryptString(originalText);
     console.log('Encrypted:', encryptedText);
     
     // Decrypt the string
-    const decryptedText = encryptor.DecryptString(encryptedText);
+    const decryptedText = encryptor.decryptString(encryptedText);
     console.log('Decrypted:', decryptedText);
     
     console.log('Original === Decrypted:', originalText === decryptedText);
@@ -59,19 +59,19 @@ import encryption from 'k6/x/encryption';
 import encoding from 'k6/encoding';
 
 export default function () {
-    const key = encryption.GenerateQualifiedKey();
-    const encryptor = encryption.NewEncryptor(key);
+    const key = encryption.generateQualifiedKey();
+    const encryptor = encryption.newEncryptor(key);
     
     // Convert string to bytes
     const originalData = encoding.b64encode("This is binary data");
     const dataBytes = encoding.b64decode(originalData);
     
     // Encrypt binary data
-    const encryptedBytes = encryptor.Encrypt(dataBytes);
+    const encryptedBytes = encryptor.encrypt(dataBytes);
     console.log('Encrypted bytes length:', encryptedBytes.length);
     
     // Decrypt binary data
-    const decryptedBytes = encryptor.Decrypt(encryptedBytes);
+    const decryptedBytes = encryptor.decrypt(encryptedBytes);
     const decryptedText = encoding.b64encode(decryptedBytes);
     
     console.log('Original === Decrypted:', originalData === decryptedText);
@@ -84,20 +84,20 @@ export default function () {
 import encryption from 'k6/x/encryption';
 
 export default function () {
-    const key = encryption.GenerateQualifiedKey();
-    const encryptor = encryption.NewEncryptor(key);
+    const key = encryption.generateQualifiedKey();
+    const encryptor = encryption.newEncryptor(key);
     
     // Enable auto-switch mode
-    encryptor.EnableAutoSwitchDecryption();
+    encryptor.enableAutoSwitchDecryption();
     
     // Test with encrypted data
-    const encryptedData = encryptor.EncryptString("Encrypted message");
-    const result1 = encryptor.DecryptString(encryptedData);
+    const encryptedData = encryptor.encryptString("Encrypted message");
+    const result1 = encryptor.decryptString(encryptedData);
     console.log('Decrypted message:', result1);
     
     // Test with non-encrypted data (will return as-is)
     const plainData = "Plain text message";
-    const result2 = encryptor.DecryptString(plainData);
+    const result2 = encryptor.decryptString(plainData);
     console.log('Plain message returned as-is:', result2);
 }
 ```
@@ -110,7 +110,7 @@ import encryption from 'k6/x/encryption';
 
 export default function () {
     const key = "your-base64-encoded-key-here";
-    const encryptor = encryption.NewEncryptor(key);
+    const encryptor = encryption.newEncryptor(key);
     
     // Encrypt payload before sending
     const payload = JSON.stringify({
@@ -118,7 +118,7 @@ export default function () {
         message: "Secret message"
     });
     
-    const encryptedPayload = encryptor.EncryptString(payload);
+    const encryptedPayload = encryptor.encryptString(payload);
     
     // Send encrypted data
     const response = http.post('https://api.example.com/encrypted', {
@@ -132,7 +132,7 @@ export default function () {
     
     // Decrypt response if needed
     if (response.headers['X-Encrypted'] === 'true') {
-        const decryptedResponse = encryptor.DecryptString(response.body);
+        const decryptedResponse = encryptor.decryptString(response.body);
         console.log('Decrypted response:', decryptedResponse);
     }
 }
@@ -156,7 +156,7 @@ export let options = {
 const encryptionKey = "your-shared-encryption-key";
 
 export default function () {
-    const encryptor = encryption.NewEncryptor(encryptionKey);
+    const encryptor = encryption.newEncryptor(encryptionKey);
     
     // Prepare test data
     const testData = {
@@ -166,7 +166,7 @@ export default function () {
     };
     
     // Encrypt the payload
-    const encryptedData = encryptor.EncryptString(JSON.stringify(testData));
+    const encryptedData = encryptor.encryptString(JSON.stringify(testData));
     
     // Send encrypted request
     const response = http.post('https://your-api.com/secure-endpoint', {
@@ -181,7 +181,7 @@ export default function () {
     
     // Decrypt response if encrypted
     if (response.headers['content-encryption'] === 'enabled') {
-        const decryptedResponse = encryptor.DecryptString(response.body);
+        const decryptedResponse = encryptor.decryptString(response.body);
         const responseData = JSON.parse(decryptedResponse);
         
         check(responseData, {
@@ -193,19 +193,27 @@ export default function () {
 
 ## API Reference
 
+### JavaScript Naming Convention
+
+In k6 extensions, Go methods are automatically converted from PascalCase to camelCase when used in JavaScript:
+
+- `GenerateQualifiedKey()` (Go) → `generateQualifiedKey()` (JavaScript)
+- `NewEncryptor()` (Go) → `newEncryptor()` (JavaScript)
+- `EncryptString()` (Go) → `encryptString()` (JavaScript)
+
 ### Encryption Module
 
-- `GenerateQualifiedKey()`: Generates a new base64-encoded AES-128 key
-- `NewEncryptor(key)`: Creates a new Encryptor instance with the provided base64 key
+- `generateQualifiedKey()`: Generates a new base64-encoded AES-128 key
+- `newEncryptor(key)`: Creates a new Encryptor instance with the provided base64 key
 
 ### Encryptor Methods
 
-- `Encrypt(data)`: Encrypts byte array data
-- `Decrypt(data)`: Decrypts byte array data
-- `EncryptString(text)`: Encrypts a string and returns base64-encoded result
-- `DecryptString(encodedData)`: Decrypts base64-encoded data and returns string
-- `EnableAutoSwitchDecryption()`: Enables auto-switch mode for decryption
-- `IsEncryptionEnabled()`: Always returns true for this implementation
+- `encrypt(data)`: Encrypts byte array data
+- `decrypt(data)`: Decrypts byte array data
+- `encryptString(text)`: Encrypts a string and returns base64-encoded result
+- `decryptString(encodedData)`: Decrypts base64-encoded data and returns string
+- `enableAutoSwitchDecryption()`: Enables auto-switch mode for decryption
+- `isEncryptionEnabled()`: Always returns true for this implementation
 
 ## Compatibility
 
