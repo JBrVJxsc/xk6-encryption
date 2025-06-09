@@ -101,6 +101,7 @@ export default function () {
     console.log('\n4. Testing performance with multiple operations...');
     const iterations = 100;
     const startTime = Date.now();
+    let performanceTestPassed = true;
     
     for (let i = 0; i < iterations; i++) {
         const data = `Test message ${i}`;
@@ -111,6 +112,7 @@ export default function () {
         
         if (decStr !== data) {
             console.error(`Iteration ${i} failed!`);
+            performanceTestPassed = false;
             break;
         }
     }
@@ -124,7 +126,7 @@ export default function () {
     console.log(`Average time per cycle: ${avgTime.toFixed(2)}ms`);
     
     check(null, {
-        'Performance test completed': () => totalTime > 0,
+        'Performance test completed': () => performanceTestPassed,
         'Average time per cycle < 10ms': () => avgTime < 10
     });
     

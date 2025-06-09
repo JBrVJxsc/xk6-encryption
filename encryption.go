@@ -172,6 +172,29 @@ func (enc *Encryptor) EncryptString(text string) (string, error) {
 
 // DecryptString is a convenience method for decrypting base64 encoded strings
 func (enc *Encryptor) DecryptString(encodedData string) (string, error) {
+	// If auto-switch decryption is enabled, handle potential plain text input
+	if enc.autoSwitchDecryption {
+		// Try to decode as base64 first
+		data, err := base64.StdEncoding.DecodeString(encodedData)
+		if err != nil {
+			// If base64 decoding fails and auto-switch is enabled, return original string
+			enc.optionalLog(false)
+			return encodedData, nil
+		}
+
+		// Try to decrypt the decoded data
+		decrypted, err := enc.Decrypt(data)
+		if err != nil {
+			// If decryption fails and auto-switch is enabled, return original string
+			enc.optionalLog(false)
+			return encodedData, nil
+		}
+
+		enc.optionalLog(true)
+		return string(decrypted), nil
+	}
+
+	// Normal mode: require valid base64 input
 	data, err := base64.StdEncoding.DecodeString(encodedData)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode base64 data: %w", err)
