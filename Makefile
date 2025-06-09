@@ -16,9 +16,17 @@ clean:
 test:
 	go test -v ./...
 
-# Run a sample test with the built k6 binary
-test-sample: build
+# Run basic functionality test
+test-basic: build
 	./k6 run examples/basic-test.js
+
+# Run custom format test
+test-custom: build
+	./k6 run examples/custom-test.js
+
+# Test with your specific encrypted data
+test-data: build
+	./k6 run examples/test-your-data.js
 
 # Format Go code
 fmt:
@@ -52,7 +60,9 @@ help:
 	@echo "  install-xk6   - Install xk6 tool"
 	@echo "  clean         - Remove build artifacts"
 	@echo "  test          - Run Go tests"
-	@echo "  test-sample   - Run sample k6 test"
+	@echo "  test-basic    - Run basic functionality test"
+	@echo "  test-custom   - Run custom format test"
+	@echo "  test-data     - Test with your specific encrypted data"
 	@echo "  fmt           - Format Go code"
 	@echo "  lint          - Run Go linter"
 	@echo "  init          - Initialize go modules"

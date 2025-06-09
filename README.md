@@ -1,6 +1,6 @@
 # k6-encryption-extension
 
-A k6 extension that provides AES-128-GCM encryption and decryption capabilities, compatible with the Coupang encryption service implementation.
+A k6 extension that provides AES-128-GCM encryption and decryption capabilities, with support for both standard and configurable custom formats.
 
 ## Features
 
@@ -8,7 +8,7 @@ A k6 extension that provides AES-128-GCM encryption and decryption capabilities,
 - Base64 key generation and handling
 - Auto-switch decryption mode (attempts decryption, returns original data if it fails)
 - String and byte array support
-- Compatible with Java implementation using AES128GCMCipher
+- Configurable custom AES-GCM format support
 
 ## Building
 
@@ -56,15 +56,17 @@ export default function () {
 
 ```javascript
 import encryption from 'k6/x/encryption';
-import encoding from 'k6/encoding';
 
 export default function () {
     const key = encryption.generateQualifiedKey();
     const encryptor = encryption.newEncryptor(key);
     
     // Convert string to bytes
-    const originalData = encoding.b64encode("This is binary data");
-    const dataBytes = encoding.b64decode(originalData);
+    const originalText = "This is binary data";
+    const dataBytes = new Uint8Array(originalText.length);
+    for (let i = 0; i < originalText.length; i++) {
+        dataBytes[i] = originalText.charCodeAt(i);
+    }
     
     // Encrypt binary data
     const encryptedBytes = encryptor.encrypt(dataBytes);
@@ -72,9 +74,14 @@ export default function () {
     
     // Decrypt binary data
     const decryptedBytes = encryptor.decrypt(encryptedBytes);
-    const decryptedText = encoding.b64encode(decryptedBytes);
     
-    console.log('Original === Decrypted:', originalData === decryptedText);
+    // Convert back to string
+    let decryptedText = '';
+    for (let i = 0; i < decryptedBytes.length; i++) {
+        decryptedText += String.fromCharCode(decryptedBytes[i]);
+    }
+    
+    console.log('Original === Decrypted:', originalText === decryptedText);
 }
 ```
 
@@ -102,92 +109,37 @@ export default function () {
 }
 ```
 
-### Using with HTTP Requests
+### Using Configurable Custom GCM Format
 
 ```javascript
-import http from 'k6/http';
 import encryption from 'k6/x/encryption';
 
 export default function () {
-    const key = "your-base64-encoded-key-here";
+    const key = encryption.generateQualifiedKey();
     const encryptor = encryption.newEncryptor(key);
     
-    // Encrypt payload before sending
-    const payload = JSON.stringify({
-        userId: 12345,
-        message: "Secret message"
-    });
+    // Configure custom format parameters
+    const ivLength = 12;        // IV length in bytes (8-16)
+    const validationOffset = 0; // Which byte of IV to use for validation (0-ivLength-1)
     
-    const encryptedPayload = encryptor.encryptString(payload);
-    
-    // Send encrypted data
-    const response = http.post('https://api.example.com/encrypted', {
-        data: encryptedPayload
-    }, {
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Encryption': 'AES128GCM'
-        }
-    });
-    
-    // Decrypt response if needed
-    if (response.headers['X-Encrypted'] === 'true') {
-        const decryptedResponse = encryptor.decryptString(response.body);
-        console.log('Decrypted response:', decryptedResponse);
+    // Use custom format: [ivLength-byte IV] + [validation byte] + [ciphertext + tag]
+    const originalText = "Hello, Custom Format!";
+    const textBytes = new Uint8Array(originalText.length);
+    for (let i = 0; i < originalText.length; i++) {
+        textBytes[i] = originalText.charCodeAt(i);
     }
-}
-```
-
-### Load Testing Encrypted APIs
-
-```javascript
-import http from 'k6/http';
-import encryption from 'k6/x/encryption';
-import { check } from 'k6';
-
-export let options = {
-    stages: [
-        { duration: '30s', target: 10 },
-        { duration: '1m', target: 50 },
-        { duration: '30s', target: 0 },
-    ],
-};
-
-const encryptionKey = "your-shared-encryption-key";
-
-export default function () {
-    const encryptor = encryption.newEncryptor(encryptionKey);
     
-    // Prepare test data
-    const testData = {
-        timestamp: Date.now(),
-        userId: Math.floor(Math.random() * 10000),
-        action: 'test_action'
-    };
+    const encrypted = encryptor.encryptCustomGCMFormat(textBytes, ivLength, validationOffset);
+    const decrypted = encryptor.decryptCustomGCMFormat(encrypted, ivLength, validationOffset);
     
-    // Encrypt the payload
-    const encryptedData = encryptor.encryptString(JSON.stringify(testData));
-    
-    // Send encrypted request
-    const response = http.post('https://your-api.com/secure-endpoint', {
-        payload: encryptedData
-    });
-    
-    // Verify response
-    check(response, {
-        'status is 200': (r) => r.status === 200,
-        'response time < 500ms': (r) => r.timings.duration < 500,
-    });
-    
-    // Decrypt response if encrypted
-    if (response.headers['content-encryption'] === 'enabled') {
-        const decryptedResponse = encryptor.decryptString(response.body);
-        const responseData = JSON.parse(decryptedResponse);
-        
-        check(responseData, {
-            'response contains success': (data) => data.status === 'success',
-        });
+    let decryptedText = '';
+    for (let i = 0; i < decrypted.length; i++) {
+        decryptedText += String.fromCharCode(decrypted[i]);
     }
+    
+    console.log('Original:', originalText);
+    console.log('Decrypted:', decryptedText);
+    console.log('Match:', originalText === decryptedText);
 }
 ```
 
@@ -208,20 +160,29 @@ In k6 extensions, Go methods are automatically converted from PascalCase to came
 
 ### Encryptor Methods
 
-- `encrypt(data)`: Encrypts byte array data
-- `decrypt(data)`: Decrypts byte array data
+- `encrypt(data)`: Encrypts byte array data using standard GCM format
+- `decrypt(data)`: Decrypts byte array data using standard GCM format
 - `encryptString(text)`: Encrypts a string and returns base64-encoded result
 - `decryptString(encodedData)`: Decrypts base64-encoded data and returns string
+- `encryptCustomGCMFormat(data, ivLength, validationOffset)`: Encrypts data using configurable custom format
+- `decryptCustomGCMFormat(data, ivLength, validationOffset)`: Decrypts data from configurable custom format
 - `enableAutoSwitchDecryption()`: Enables auto-switch mode for decryption
 - `isEncryptionEnabled()`: Always returns true for this implementation
 
+## Custom Format Parameters
+
+- `ivLength`: Length of the initialization vector in bytes (8-16)
+- `validationOffset`: Index within the IV to use for validation byte (0 to ivLength-1)
+
+The custom format structure is: `[IV] + [IV[validationOffset]] + [ciphertext + tag]`
+
 ## Compatibility
 
-This extension is compatible with the Java AES128GCMCipher implementation used in the Coupang service. Keys and encrypted data can be exchanged between the Java implementation and this k6 extension.
+This extension is compatible with Java AES-GCM implementations that use standard and custom formats. Keys and encrypted data can be exchanged between compatible Java implementations and this k6 extension.
 
 ## Requirements
 
-- Go 1.24.2 or later
+- Go 1.21 or later
 - k6 v0.47.0 or later
 - xk6 for building
 
