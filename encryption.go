@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sync"
 
 	"go.k6.io/k6/js/modules"
 )
@@ -23,6 +24,31 @@ type Encryptor struct {
 	keyBytes               []byte
 	autoSwitchDecryption   bool
 	expectEncryptedMessage *bool
+
+	// Performance optimizations: Pre-computed cipher instances
+	aeadGCM cipher.AEAD
+	block   cipher.Block
+
+	// Buffer pools for reusing memory
+	noncePool sync.Pool
+}
+
+// Buffer pool helpers
+func (enc *Encryptor) getNonceBuffer() []byte {
+	if buf := enc.noncePool.Get(); buf != nil {
+		return *(buf.(*[]byte))
+	}
+	return make([]byte, 12) // GCM nonce size
+}
+
+func (enc *Encryptor) putNonceBuffer(buf []byte) {
+	if len(buf) == 12 {
+		// Clear for security before returning to pool
+		for i := range buf {
+			buf[i] = 0
+		}
+		enc.noncePool.Put(&buf)
+	}
 }
 
 // NewEncryptor creates a new Encryptor instance with the provided base64 encoded key
@@ -40,11 +66,34 @@ func (*Encryption) NewEncryptor(key string) (*Encryptor, error) {
 		return nil, errors.New("key must be 16 bytes (128 bits) for AES-128")
 	}
 
-	return &Encryptor{
+	// Pre-create cipher instances for performance
+	block, err := aes.NewCipher(keyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	aeadGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	enc := &Encryptor{
 		keyBytes:               keyBytes,
 		autoSwitchDecryption:   false,
 		expectEncryptedMessage: nil,
-	}, nil
+		aeadGCM:                aeadGCM,
+		block:                  block,
+	}
+
+	// Initialize buffer pools
+	enc.noncePool = sync.Pool{
+		New: func() any {
+			nonce := make([]byte, 12)
+			return &nonce
+		},
+	}
+
+	return enc, nil
 }
 
 // Encrypt encrypts the provided data using AES-128-GCM
@@ -53,24 +102,17 @@ func (enc *Encryptor) Encrypt(data []byte) ([]byte, error) {
 		return nil, errors.New("data cannot be nil")
 	}
 
-	block, err := aes.NewCipher(enc.keyBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
+	// Get nonce buffer from pool
+	nonce := enc.getNonceBuffer()
+	defer enc.putNonceBuffer(nonce)
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Generate a random nonce
-	nonce := make([]byte, gcm.NonceSize())
+	// Generate random nonce
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	// Encrypt the data
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
+	// Encrypt the data using pre-computed GCM instance
+	ciphertext := enc.aeadGCM.Seal(nonce, nonce, data, nil)
 	return ciphertext, nil
 }
 
@@ -89,23 +131,13 @@ func (enc *Encryptor) Decrypt(data []byte) ([]byte, error) {
 
 // decryptInternal performs the actual decryption
 func (enc *Encryptor) decryptInternal(data []byte) ([]byte, error) {
-	block, err := aes.NewCipher(enc.keyBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	nonceSize := gcm.NonceSize()
+	nonceSize := enc.aeadGCM.NonceSize()
 	if len(data) < nonceSize {
 		return nil, errors.New("ciphertext too short")
 	}
 
 	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	plaintext, err := enc.aeadGCM.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt: %w", err)
 	}
@@ -224,16 +256,6 @@ func (enc *Encryptor) DecryptCustomGCMFormat(data []byte, ivLength int, validati
 		return nil, errors.New("validation offset must be within IV range")
 	}
 
-	block, err := aes.NewCipher(enc.keyBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
 	minDataLength := ivLength + 1 + 16 // IV + validation byte + minimum tag size
 
 	if len(data) < minDataLength {
@@ -251,21 +273,29 @@ func (enc *Encryptor) DecryptCustomGCMFormat(data []byte, ivLength int, validati
 	}
 
 	// GCM always needs exactly 12 bytes for nonce
-	// If stored IV is not 12 bytes, we need to adjust it
-	var gcmNonce []byte
-	if ivLength == 12 {
-		gcmNonce = storedIV
-	} else if ivLength < 12 {
-		// Pad with zeros to reach 12 bytes (must match encryption logic)
-		gcmNonce = make([]byte, 12)
-		copy(gcmNonce, storedIV)
-	} else {
-		// Truncate to 12 bytes
-		gcmNonce = storedIV[:12]
+	// Get nonce buffer from pool
+	gcmNonce := enc.getNonceBuffer()
+	defer enc.putNonceBuffer(gcmNonce)
+
+	// Clear the nonce buffer first for security
+	for i := range gcmNonce {
+		gcmNonce[i] = 0
 	}
 
-	// Decrypt using standard GCM (encryptedData already contains ciphertext + tag)
-	plaintext, err := gcm.Open(nil, gcmNonce, encryptedData, nil)
+	// If stored IV is not 12 bytes, we need to adjust it
+	if ivLength == 12 {
+		copy(gcmNonce, storedIV)
+	} else if ivLength < 12 {
+		// Pad with zeros to reach 12 bytes (must match encryption logic)
+		copy(gcmNonce, storedIV)
+		// Rest remains zero-padded
+	} else {
+		// Truncate to 12 bytes
+		copy(gcmNonce, storedIV[:12])
+	}
+
+	// Decrypt using pre-created GCM instance (encryptedData already contains ciphertext + tag)
+	plaintext, err := enc.aeadGCM.Open(nil, gcmNonce, encryptedData, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt custom GCM format: %w", err)
 	}
@@ -289,36 +319,35 @@ func (enc *Encryptor) EncryptCustomGCMFormat(data []byte, ivLength int, validati
 		return nil, errors.New("validation offset must be within IV range")
 	}
 
-	block, err := aes.NewCipher(enc.keyBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
+	// Get nonce buffer from pool
+	gcmNonce := enc.getNonceBuffer()
+	defer enc.putNonceBuffer(gcmNonce)
 
 	// Generate a random 12-byte nonce (GCM requirement)
-	gcmNonce := make([]byte, 12)
 	if _, err := rand.Read(gcmNonce); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	// Create the IV to store in the format and the actual nonce to use for encryption
+	// Create the IV to store in the format
 	var storedIV []byte
 	var actualNonce []byte
 
 	if ivLength == 12 {
-		storedIV = gcmNonce
+		storedIV = make([]byte, 12)
+		copy(storedIV, gcmNonce)
 		actualNonce = gcmNonce
 	} else if ivLength < 12 {
 		// Use first ivLength bytes of the nonce and pad with zeros for actual encryption
 		// This ensures decryption can reconstruct the same nonce by padding with zeros
-		storedIV = gcmNonce[:ivLength]
-		actualNonce = make([]byte, 12)
-		copy(actualNonce, storedIV)
-		// Rest remains zero-padded
+		storedIV = make([]byte, ivLength)
+		copy(storedIV, gcmNonce[:ivLength])
+
+		// Clear the nonce buffer and copy back the truncated IV for encryption
+		for i := range gcmNonce {
+			gcmNonce[i] = 0
+		}
+		copy(gcmNonce, storedIV)
+		actualNonce = gcmNonce
 	} else {
 		// Generate additional random bytes to reach ivLength
 		storedIV = make([]byte, ivLength)
@@ -330,10 +359,11 @@ func (enc *Encryptor) EncryptCustomGCMFormat(data []byte, ivLength int, validati
 	}
 
 	// Encrypt the data using the actual nonce (returns ciphertext + tag combined)
-	encryptedData := gcm.Seal(nil, actualNonce, data, nil)
+	encryptedData := enc.aeadGCM.Seal(nil, actualNonce, data, nil)
 
 	// Create custom format: [stored IV] + [validation byte] + [ciphertext + tag]
-	result := make([]byte, 0, ivLength+1+len(encryptedData))
+	resultSize := ivLength + 1 + len(encryptedData)
+	result := make([]byte, 0, resultSize)
 	result = append(result, storedIV...)                // Add stored IV
 	result = append(result, storedIV[validationOffset]) // Add validation byte
 	result = append(result, encryptedData...)           // Add encrypted data + tag
